@@ -5,8 +5,6 @@ const nodemailer = require('nodemailer');
 const dns = require('dns');
 require('dotenv').config();
 
-dns.setDefaultResultOrder('ipv4first');
-
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -20,24 +18,77 @@ const dbConfig = {
     options: { encrypt: true, trustServerCertificate: true }
 };
 
-// Transportador Ultra-Compatible (Intento con puerto alternativo y timeouts largos)
-const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    },
-    connectionTimeout: 20000, // 20 segundos
-    greetingTimeout: 20000,
-    socketTimeout: 20000,
-    tls: {
-        rejectUnauthorized: false
+// --- FUNCIÓN DE ENVÍO BLINDADA ---
+async function sendMailPremium(to, nombres, otp) {
+    try {
+        // TRUCO MAESTRO: Resolvemos la IP manualmente para forzar IPv4
+        const resolved = await new Promise((resolve, reject) => {
+            dns.lookup('smtp.gmail.com', { family: 4 }, (err, address) => {
+                if (err) reject(err);
+                else resolve(address);
+            });
+        });
+
+        console.log("IP de Gmail resuelta con éxito:", resolved);
+
+        const transporter = nodemailer.createTransport({
+            host: resolved, // Usamos la IP numérica directamente
+            port: 465,
+            secure: true,
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS
+            },
+            tls: {
+                servername: 'smtp.gmail.com', // Necesario para que Google acepte la IP
+                rejectUnauthorized: false
+            }
+        });
+
+        const mailOptions = {
+            from: `"Hotel La Noche" <${process.env.EMAIL_USER}>`,
+            to: to,
+            subject: '👑 Active su Membresía VIP - Hotel La Noche',
+            html: `
+                <div style="background-color: #0A0A0A; padding: 40px; font-family: sans-serif; color: #F5F5F5; text-align: center; border-radius: 20px; border: 2px solid #D4AF37;">
+                    <h1 style="color: #D4AF37; letter-spacing: 5px;">HOTEL LA NOCHE</h1>
+                    <p style="color: #C5A059;">Experiencia de Lujo & Confort</p>
+                    <hr style="border: 0; border-top: 1px solid rgba(212, 175, 55, 0.2); margin: 30px 0;">
+                    <p style="font-size: 18px;">Estimado(a) <strong>${nombres}</strong>,</p>
+                    <p style="color: #9E9E9E;">Su código de seguridad es:</p>
+                    <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
+                        <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
+                    </div>
+                </div>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+        console.log("Email enviado con éxito!");
+    } catch (e) {
+        console.error("ERROR CRÍTICO EN ENVÍO:", e.message);
     }
-});
+}
 
 // --- AUTH ---
+
+app.post('/api/register', async (req, res) => {
+    const { nombres, dni, email, password } = req.body;
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    try {
+        let pool = await sql.connect(dbConfig);
+        let resPersona = await pool.request().input('nom', sql.VarChar, nombres).input('dni', sql.VarChar, dni).input('mail', sql.VarChar, email)
+            .query(`INSERT INTO PERSONA (nombres, apellido_paterno, apellido_materno, tipo_documento, numero_documento, email) VALUES (@nom, 'Soto', 'Lozano', 'DNI', @dni, @mail); SELECT SCOPE_IDENTITY() AS id_persona;`);
+        const idPersona = resPersona.recordset[0].id_persona;
+        await pool.request().input('idP', sql.Int, idPersona).input('pass', sql.VarChar, password).input('otp', sql.VarChar, otp)
+            .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
+
+        // LLAMADA A LA FUNCIÓN BLINDADA
+        sendMailPremium(email, nombres, otp);
+
+        res.status(201).json({ message: 'Código enviado' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.post('/api/login', async (req, res) => {
     const { email, contrasena } = req.body;
@@ -51,35 +102,6 @@ app.post('/api/login', async (req, res) => {
             return res.json({ tipo: 'CLIENTE', datos: user });
         }
         res.status(401).json({ error: 'Credenciales incorrectas' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-app.post('/api/register', async (req, res) => {
-    const { nombres, dni, email, password } = req.body;
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    try {
-        let pool = await sql.connect(dbConfig);
-        let resPersona = await pool.request().input('nom', sql.VarChar, nombres).input('dni', sql.VarChar, dni).input('mail', sql.VarChar, email)
-            .query(`INSERT INTO PERSONA (nombres, apellido_paterno, apellido_materno, tipo_documento, numero_documento, email) VALUES (@nom, 'Soto', 'Lozano', 'DNI', @dni, @mail); SELECT SCOPE_IDENTITY() AS id_persona;`);
-        const idPersona = resPersona.recordset[0].id_persona;
-        await pool.request().input('idP', sql.Int, idPersona).input('pass', sql.VarChar, password).input('otp', sql.VarChar, otp)
-            .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
-
-        const mailOptions = {
-            from: `"Hotel La Noche" <${process.env.EMAIL_USER}>`,
-            to: email,
-            subject: '👑 Active su Membresía VIP - Hotel La Noche',
-            html: `<div style="background-color: #0A0A0A; padding: 40px; color: #F5F5F5; text-align: center; border-radius: 20px; border: 2px solid #D4AF37;">
-                    <h1 style="color: #D4AF37;">HOTEL LA NOCHE</h1>
-                    <p>Su código de seguridad:</p>
-                    <div style="font-size: 42px; font-weight: bold; color: #D4AF37;">${otp}</div>
-                   </div>`
-        };
-
-        // Enviamos sin esperar al callback para no trabar la respuesta del API
-        transporter.sendMail(mailOptions).then(() => console.log("Email enviado exitosamente!")).catch(e => console.error("Error definitivo enviando:", e.message));
-
-        res.status(201).json({ message: 'Código enviado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -113,7 +135,10 @@ app.post('/api/reservas', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
         let resPrecio = await pool.request().input('idH', sql.Int, id_habitacion).query('SELECT th.precio_noche FROM HABITACION h INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE h.id_habitacion = @idH');
-        const subtotal = resPrecio.recordset[0].precio_noche;
+        const precioNoche = resPrecio.recordset[0].precio_noche;
+        const d1 = new Date(fecha_entrada); const d2 = new Date(fecha_salida);
+        const diffDays = Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) || 1;
+        const subtotal = precioNoche * diffDays;
         let result = await pool.request().input('idCliente', sql.Int, id_cliente).input('idHab', sql.Int, id_habitacion).input('fEntrada', sql.Date, fecha_entrada).input('fSalida', sql.Date, fecha_salida)
             .query(`INSERT INTO RESERVA (id_cliente, id_habitacion, fecha_reserva, fecha_entrada, fecha_salida, estado_reserva) VALUES (@idCliente, @idHab, GETDATE(), @fEntrada, @fSalida, 'Confirmada'); UPDATE HABITACION SET estado = 'Reservada' WHERE id_habitacion = @idHab; SELECT SCOPE_IDENTITY() AS id_reserva;`);
         const idReserva = result.recordset[0].id_reserva;
