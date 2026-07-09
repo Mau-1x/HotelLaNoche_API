@@ -20,18 +20,17 @@ const dbConfig = {
     }
 };
 
-// Configuración de Correo Blindada para Render (Uso de Puerto 587)
+// CONFIGURACIÓN BLINDADA (Fuerza IPv4 para evitar ENETUNREACH)
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // true para 465, false para 587
+    port: 465,
+    secure: true, // Usamos puerto 465 que es más estable en Render
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
-    tls: {
-        rejectUnauthorized: false
-    }
+    // ESTA ES LA LÍNEA MÁGICA:
+    family: 4
 });
 
 // --- AUTH ---
@@ -82,7 +81,6 @@ app.post('/api/register', async (req, res) => {
             .input('otp', sql.VarChar, otp)
             .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
 
-        // Enviar Correo con Diseño Premium
         const mailOptions = {
             from: `"Hotel La Noche" <${process.env.EMAIL_USER}>`,
             to: email,
@@ -103,8 +101,8 @@ app.post('/api/register', async (req, res) => {
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
-            if (error) console.log("Error enviando mail:", error.message);
-            else console.log("Email enviado con éxito!");
+            if (error) console.log("Error mail:", error.message);
+            else console.log("Email enviado OK");
         });
 
         res.status(201).json({ message: 'Código enviado' });
@@ -121,7 +119,7 @@ app.post('/api/verify', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- NEGOCIO ---
+// --- NEGOCIO (Reserva con Ticket JSON) ---
 
 app.get('/api/habitaciones', async (req, res) => {
     try {
