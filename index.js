@@ -20,12 +20,17 @@ const dbConfig = {
     }
 };
 
-// Configuración de Correo
+// Configuración de Correo Blindada para Render (Uso de Puerto 587)
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // true para 465, false para 587
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
+    },
+    tls: {
+        rejectUnauthorized: false
     }
 });
 
@@ -77,17 +82,31 @@ app.post('/api/register', async (req, res) => {
             .input('otp', sql.VarChar, otp)
             .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
 
+        // Enviar Correo con Diseño Premium
         const mailOptions = {
             from: `"Hotel La Noche" <${process.env.EMAIL_USER}>`,
             to: email,
             subject: '👑 Active su Membresía VIP - Hotel La Noche',
-            html: `<div style="background-color: #0A0A0A; padding: 40px; color: #F5F5F5; text-align: center; border-radius: 20px; border: 2px solid #D4AF37;">
-                    <h1 style="color: #D4AF37;">HOTEL LA NOCHE</h1>
-                    <p>Su código de seguridad es:</p>
-                    <div style="font-size: 42px; font-weight: bold; color: #D4AF37;">${otp}</div>
-                   </div>`
+            html: `
+                <div style="background-color: #0A0A0A; padding: 40px; font-family: sans-serif; color: #F5F5F5; text-align: center; border-radius: 20px; border: 2px solid #D4AF37;">
+                        <h1 style="color: #D4AF37; letter-spacing: 5px;">HOTEL LA NOCHE</h1>
+                        <p style="color: #C5A059;">Experiencia de Lujo & Confort</p>
+                        <hr style="border: 0; border-top: 1px solid rgba(212, 175, 55, 0.2); margin: 30px 0;">
+                        <p style="font-size: 18px;">Estimado(a) <strong>${nombres}</strong>,</p>
+                        <p style="color: #9E9E9E;">Su código de seguridad es:</p>
+                        <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
+                            <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
+                        </div>
+                        <p style="font-size: 11px; color: #555;">© 2024 Hotel La Noche S.A.</p>
+                </div>
+            `
         };
-        transporter.sendMail(mailOptions);
+
+        transporter.sendMail(mailOptions, (error, info) => {
+            if (error) console.log("Error enviando mail:", error.message);
+            else console.log("Email enviado con éxito!");
+        });
+
         res.status(201).json({ message: 'Código enviado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -123,60 +142,40 @@ app.get('/api/habitaciones', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// RESERVA + COMPROBANTE CON DESGLOSE
 app.post('/api/reservas', async (req, res) => {
     const { id_cliente, id_habitacion, fecha_entrada, fecha_salida } = req.body;
     const ticketCode = 'LN-' + Math.random().toString(36).substr(2, 6).toUpperCase();
     try {
         let pool = await sql.connect(dbConfig);
-
-        let resPrecio = await pool.request()
-            .input('idH', sql.Int, id_habitacion)
+        let resPrecio = await pool.request().input('idH', sql.Int, id_habitacion)
             .query('SELECT th.precio_noche FROM HABITACION h INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE h.id_habitacion = @idH');
-
         const precioNoche = resPrecio.recordset[0].precio_noche;
-
-        // Calcular días
         const d1 = new Date(fecha_entrada);
         const d2 = new Date(fecha_salida);
         const diffDays = Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) || 1;
         const subtotal = precioNoche * diffDays;
 
-        let result = await pool.request()
-            .input('idCliente', sql.Int, id_cliente)
-            .input('idHab', sql.Int, id_habitacion)
-            .input('fEntrada', sql.Date, fecha_entrada)
-            .input('fSalida', sql.Date, fecha_salida)
+        let result = await pool.request().input('idCliente', sql.Int, id_cliente).input('idHab', sql.Int, id_habitacion).input('fEntrada', sql.Date, fecha_entrada).input('fSalida', sql.Date, fecha_salida)
             .query(`
                 INSERT INTO RESERVA (id_cliente, id_habitacion, fecha_reserva, fecha_entrada, fecha_salida, estado_reserva)
                 VALUES (@idCliente, @idHab, GETDATE(), @fEntrada, @fSalida, 'Confirmada');
                 UPDATE HABITACION SET estado = 'Reservada' WHERE id_habitacion = @idHab;
                 SELECT SCOPE_IDENTITY() AS id_reserva;
             `);
-
         const idReserva = result.recordset[0].id_reserva;
-
-        await pool.request()
-            .input('idR', sql.Int, idReserva)
-            .input('code', sql.VarChar, ticketCode)
-            .input('total', sql.Decimal(10,2), subtotal)
+        await pool.request().input('idR', sql.Int, idReserva).input('code', sql.VarChar, ticketCode).input('total', sql.Decimal(10,2), subtotal)
             .query('INSERT INTO COMPROBANTE (id_reserva, codigo_ticket, monto_total, fecha_emision) VALUES (@idR, @code, @total, GETDATE())');
 
         res.status(201).json({ id_reserva: idReserva, message: 'Reserva Exitosa' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CANCELACIÓN REAL
 app.put('/api/reservas/cancelar/:idReserva', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
-        await pool.request()
-            .input('idRes', sql.Int, req.params.idReserva)
-            .query(`
-                UPDATE RESERVA SET estado_reserva = 'Cancelada' WHERE id_reserva = @idRes;
-                UPDATE HABITACION SET estado = 'Disponible' WHERE id_habitacion = (SELECT id_habitacion FROM RESERVA WHERE id_reserva = @idRes);
-            `);
-        res.json({ message: 'Reserva Cancelada con Éxito' });
+        await pool.request().input('idRes', sql.Int, req.params.idReserva)
+            .query(`UPDATE RESERVA SET estado_reserva = 'Cancelada' WHERE id_reserva = @idRes; UPDATE HABITACION SET estado = 'Disponible' WHERE id_habitacion = (SELECT id_habitacion FROM RESERVA WHERE id_reserva = @idRes);`);
+        res.json({ message: 'Anulada' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -184,13 +183,7 @@ app.get('/api/reservas/cliente/:idCliente', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
         let result = await pool.request().input('idC', sql.Int, req.params.idCliente)
-            .query(`
-                SELECT r.*, h.numero_habitacion, th.nombre as tipo_nombre
-                FROM RESERVA r
-                INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion
-                INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion
-                WHERE r.id_cliente = @idC ORDER BY r.fecha_reserva DESC
-            `);
+            .query(`SELECT r.*, h.numero_habitacion, th.nombre as tipo_nombre FROM RESERVA r INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE r.id_cliente = @idC ORDER BY r.fecha_reserva DESC`);
         res.json(result.recordset);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -199,16 +192,7 @@ app.get('/api/comprobantes/reserva/:idReserva', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
         let result = await pool.request().input('idR', sql.Int, req.params.idReserva)
-            .query(`
-                SELECT c.*, p.nombres, h.numero_habitacion, th.nombre as tipo_nombre
-                FROM COMPROBANTE c
-                INNER JOIN RESERVA r ON c.id_reserva = r.id_reserva
-                INNER JOIN CLIENTE cl ON r.id_cliente = cl.id_cliente
-                INNER JOIN PERSONA p ON cl.id_persona = p.id_persona
-                INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion
-                INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion
-                WHERE c.id_reserva = @idR
-            `);
+            .query(`SELECT c.*, p.nombres, h.numero_habitacion, th.nombre as tipo_nombre FROM COMPROBANTE c INNER JOIN RESERVA r ON c.id_reserva = r.id_reserva INNER JOIN CLIENTE cl ON r.id_cliente = cl.id_cliente INNER JOIN PERSONA p ON cl.id_persona = p.id_persona INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE c.id_reserva = @idR`);
         res.json(result.recordset[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
