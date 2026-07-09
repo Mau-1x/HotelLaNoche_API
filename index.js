@@ -81,19 +81,33 @@ app.post('/api/register', async (req, res) => {
             .input('otp', sql.VarChar, otp)
             .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
 
-        // 3. Enviar Correo
+        // 3. Enviar Correo con Diseño Premium
         const mailOptions = {
-            from: process.env.EMAIL_USER,
+            from: `"Hotel La Noche" <${process.env.EMAIL_USER}>`,
             to: email,
-            subject: 'Código de Verificación - Hotel La Noche',
+            subject: '👑 Active su Membresía VIP - Hotel La Noche',
             html: `
-                <div style="font-family: Arial, sans-serif; border: 1px solid #D4AF37; padding: 20px; border-radius: 10px;">
-                    <h2 style="color: #D4AF37;">Bienvenido a Hotel La Noche</h2>
-                    <p>Su código de verificación de seguridad es:</p>
-                    <div style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #333; padding: 10px; background: #f9f9f9; text-align: center;">
-                        ${otp}
+                <div style="background-color: #0A0A0A; padding: 40px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #F5F5F5; text-align: center; border-radius: 20px;">
+                    <div style="border: 2px solid #D4AF37; padding: 30px; border-radius: 15px;">
+                        <h1 style="color: #D4AF37; letter-spacing: 5px; margin-bottom: 10px;">HOTEL LA NOCHE</h1>
+                        <p style="text-transform: uppercase; font-size: 12px; letter-spacing: 2px; color: #C5A059;">Experiencia de Lujo & Confort</p>
+
+                        <hr style="border: 0; border-top: 1px solid rgba(212, 175, 55, 0.2); margin: 30px 0;">
+
+                        <p style="font-size: 18px;">Estimado(a) <strong>${nombres}</strong>,</p>
+                        <p style="color: #9E9E9E; line-height: 1.6;">Gracias por elegir la exclusividad de nuestro hotel. Para activar su cuenta y comenzar su próxima estancia, utilice el siguiente código de seguridad:</p>
+
+                        <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
+                            <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
+                        </div>
+
+                        <p style="font-size: 14px; color: #9E9E9E;">Este código expirará en 15 minutos.</p>
+
+                        <hr style="border: 0; border-top: 1px solid rgba(212, 175, 55, 0.2); margin: 30px 0;">
+
+                        <p style="font-size: 12px; color: #C5A059;">Si no ha solicitado este registro, por favor ignore este mensaje.</p>
+                        <p style="font-size: 11px; color: #555; margin-top: 20px;">© 2024 Hotel La Noche S.A. | Todos los derechos reservados.</p>
                     </div>
-                    <p>Use este código en la aplicación para activar su cuenta VIP.</p>
                 </div>
             `
         };
