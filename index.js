@@ -123,21 +123,25 @@ app.get('/api/habitaciones', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// RESERVA + COMPROBANTE AUTOMÁTICO
+// RESERVA + COMPROBANTE CON DESGLOSE
 app.post('/api/reservas', async (req, res) => {
     const { id_cliente, id_habitacion, fecha_entrada, fecha_salida } = req.body;
-    const ticketCode = 'TKT-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+    const ticketCode = 'LN-' + Math.random().toString(36).substr(2, 6).toUpperCase();
     try {
         let pool = await sql.connect(dbConfig);
 
-        // 1. Obtener precio para el comprobante
         let resPrecio = await pool.request()
             .input('idH', sql.Int, id_habitacion)
             .query('SELECT th.precio_noche FROM HABITACION h INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE h.id_habitacion = @idH');
 
-        const precio = resPrecio.recordset[0].precio_noche;
+        const precioNoche = resPrecio.recordset[0].precio_noche;
 
-        // 2. Crear Reserva
+        // Calcular días
+        const d1 = new Date(fecha_entrada);
+        const d2 = new Date(fecha_salida);
+        const diffDays = Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) || 1;
+        const subtotal = precioNoche * diffDays;
+
         let result = await pool.request()
             .input('idCliente', sql.Int, id_cliente)
             .input('idHab', sql.Int, id_habitacion)
@@ -152,14 +156,27 @@ app.post('/api/reservas', async (req, res) => {
 
         const idReserva = result.recordset[0].id_reserva;
 
-        // 3. Crear Comprobante Automático
         await pool.request()
             .input('idR', sql.Int, idReserva)
             .input('code', sql.VarChar, ticketCode)
-            .input('total', sql.Decimal(10,2), precio)
+            .input('total', sql.Decimal(10,2), subtotal)
             .query('INSERT INTO COMPROBANTE (id_reserva, codigo_ticket, monto_total, fecha_emision) VALUES (@idR, @code, @total, GETDATE())');
 
-        res.status(201).json({ id_reserva: idReserva, message: 'Reserva y Ticket creados' });
+        res.status(201).json({ id_reserva: idReserva, message: 'Reserva Exitosa' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// CANCELACIÓN REAL
+app.put('/api/reservas/cancelar/:idReserva', async (req, res) => {
+    try {
+        let pool = await sql.connect(dbConfig);
+        await pool.request()
+            .input('idRes', sql.Int, req.params.idReserva)
+            .query(`
+                UPDATE RESERVA SET estado_reserva = 'Cancelada' WHERE id_reserva = @idRes;
+                UPDATE HABITACION SET estado = 'Disponible' WHERE id_habitacion = (SELECT id_habitacion FROM RESERVA WHERE id_reserva = @idRes);
+            `);
+        res.json({ message: 'Reserva Cancelada con Éxito' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -167,7 +184,13 @@ app.get('/api/reservas/cliente/:idCliente', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
         let result = await pool.request().input('idC', sql.Int, req.params.idCliente)
-            .query('SELECT r.*, h.numero_habitacion FROM RESERVA r INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion WHERE r.id_cliente = @idC ORDER BY r.fecha_reserva DESC');
+            .query(`
+                SELECT r.*, h.numero_habitacion, th.nombre as tipo_nombre
+                FROM RESERVA r
+                INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion
+                INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+                WHERE r.id_cliente = @idC ORDER BY r.fecha_reserva DESC
+            `);
         res.json(result.recordset);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -176,7 +199,16 @@ app.get('/api/comprobantes/reserva/:idReserva', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
         let result = await pool.request().input('idR', sql.Int, req.params.idReserva)
-            .query('SELECT * FROM COMPROBANTE WHERE id_reserva = @idR');
+            .query(`
+                SELECT c.*, p.nombres, h.numero_habitacion, th.nombre as tipo_nombre
+                FROM COMPROBANTE c
+                INNER JOIN RESERVA r ON c.id_reserva = r.id_reserva
+                INNER JOIN CLIENTE cl ON r.id_cliente = cl.id_cliente
+                INNER JOIN PERSONA p ON cl.id_persona = p.id_persona
+                INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion
+                INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion
+                WHERE c.id_reserva = @idR
+            `);
         res.json(result.recordset[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
