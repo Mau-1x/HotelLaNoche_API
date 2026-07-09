@@ -20,11 +20,9 @@ const dbConfig = {
     }
 };
 
-// Configuración de Correo Profesional (Preparado para SendGrid o Gmail)
+// Configuración de Correo Profesional para Gmail
 const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: process.env.EMAIL_PORT || 465,
-    secure: true,
+    service: 'gmail',
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
