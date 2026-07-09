@@ -1,13 +1,14 @@
 const express = require('express');
 const sql = require('mssql');
 const cors = require('cors');
-const nodemailer = require('nodemailer');
-const dns = require('dns');
+const { Resend } = require('resend'); // Nueva tecnología de correo
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 const dbConfig = {
     user: process.env.DB_USER,
@@ -18,35 +19,11 @@ const dbConfig = {
     options: { encrypt: true, trustServerCertificate: true }
 };
 
-// --- FUNCIÓN DE ENVÍO BLINDADA ---
+// --- FUNCIÓN DE ENVÍO PROFESIONAL (Vía API - No falla en Render) ---
 async function sendMailPremium(to, nombres, otp) {
     try {
-        // TRUCO MAESTRO: Resolvemos la IP manualmente para forzar IPv4
-        const resolved = await new Promise((resolve, reject) => {
-            dns.lookup('smtp.gmail.com', { family: 4 }, (err, address) => {
-                if (err) reject(err);
-                else resolve(address);
-            });
-        });
-
-        console.log("IP de Gmail resuelta con éxito:", resolved);
-
-        const transporter = nodemailer.createTransport({
-            host: resolved, // Usamos la IP numérica directamente
-            port: 465,
-            secure: true,
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            },
-            tls: {
-                servername: 'smtp.gmail.com', // Necesario para que Google acepte la IP
-                rejectUnauthorized: false
-            }
-        });
-
-        const mailOptions = {
-            from: `"Hotel La Noche" <${process.env.EMAIL_USER}>`,
+        await resend.emails.send({
+            from: 'Hotel La Noche <onboarding@resend.dev>', // Luego podrás poner tu propio dominio
             to: to,
             subject: '👑 Active su Membresía VIP - Hotel La Noche',
             html: `
@@ -59,14 +36,13 @@ async function sendMailPremium(to, nombres, otp) {
                     <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
                         <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
                     </div>
+                    <p style="font-size: 12px; color: #555;">Reserva segura vía Hotel La Noche App</p>
                 </div>
             `
-        };
-
-        await transporter.sendMail(mailOptions);
-        console.log("Email enviado con éxito!");
+        });
+        console.log("Email enviado exitosamente vía Resend API!");
     } catch (e) {
-        console.error("ERROR CRÍTICO EN ENVÍO:", e.message);
+        console.error("ERROR RESEND:", e.message);
     }
 }
 
@@ -83,9 +59,7 @@ app.post('/api/register', async (req, res) => {
         await pool.request().input('idP', sql.Int, idPersona).input('pass', sql.VarChar, password).input('otp', sql.VarChar, otp)
             .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
 
-        // LLAMADA A LA FUNCIÓN BLINDADA
         sendMailPremium(email, nombres, otp);
-
         res.status(201).json({ message: 'Código enviado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
