@@ -2,7 +2,13 @@ const express = require('express');
 const sql = require('mssql');
 const cors = require('cors');
 const nodemailer = require('nodemailer');
+const dns = require('dns'); // Módulo de red
 require('dotenv').config();
+
+// CONFIGURACIÓN MAESTRA: Forzar IPv4 en todo el servidor
+if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+}
 
 const app = express();
 app.use(express.json());
@@ -20,17 +26,20 @@ const dbConfig = {
     }
 };
 
-// CONFIGURACIÓN BLINDADA (Fuerza IPv4 para evitar ENETUNREACH)
+// Transportador de correo optimizado para redes restrictivas
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 465,
-    secure: true, // Usamos puerto 465 que es más estable en Render
+    port: 587,
+    secure: false, // Usamos puerto 587 que es el estándar para apps
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
-    // ESTA ES LA LÍNEA MÁGICA:
-    family: 4
+    tls: {
+        // Esto evita errores de certificados en la nube
+        rejectUnauthorized: false,
+        minVersion: "TLSv1.2"
+    }
 });
 
 // --- AUTH ---
@@ -87,22 +96,17 @@ app.post('/api/register', async (req, res) => {
             subject: '👑 Active su Membresía VIP - Hotel La Noche',
             html: `
                 <div style="background-color: #0A0A0A; padding: 40px; font-family: sans-serif; color: #F5F5F5; text-align: center; border-radius: 20px; border: 2px solid #D4AF37;">
-                        <h1 style="color: #D4AF37; letter-spacing: 5px;">HOTEL LA NOCHE</h1>
-                        <p style="color: #C5A059;">Experiencia de Lujo & Confort</p>
-                        <hr style="border: 0; border-top: 1px solid rgba(212, 175, 55, 0.2); margin: 30px 0;">
-                        <p style="font-size: 18px;">Estimado(a) <strong>${nombres}</strong>,</p>
-                        <p style="color: #9E9E9E;">Su código de seguridad es:</p>
-                        <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
-                            <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
+                        <h1 style="color: #D4AF37;">HOTEL LA NOCHE</h1>
+                        <div style="padding: 20px; background: #1E1E1E; border-radius: 12px; margin: 20px auto; width: fit-content; border: 1px dashed #D4AF37;">
+                            <span style="font-size: 42px; font-weight: bold; color: #D4AF37;">${otp}</span>
                         </div>
-                        <p style="font-size: 11px; color: #555;">© 2024 Hotel La Noche S.A.</p>
                 </div>
             `
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) console.log("Error mail:", error.message);
-            else console.log("Email enviado OK");
+            else console.log("Email enviado con éxito a: " + email);
         });
 
         res.status(201).json({ message: 'Código enviado' });
