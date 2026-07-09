@@ -5,8 +5,10 @@ const nodemailer = require('nodemailer');
 const dns = require('dns');
 require('dotenv').config();
 
-// FORZAR IPv4 EN TODO EL PROCESO (SOLUCIÓN DEFINITIVA RENDER)
-dns.setDefaultResultOrder('ipv4first');
+// Forzar IPv4 para evitar errores de red en la nube
+if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+}
 
 const app = express();
 app.use(express.json());
@@ -24,20 +26,15 @@ const dbConfig = {
     }
 };
 
-// Transportador blindado contra bloqueos de red IPv6
+// Transportador con MODO DEBUG para ver qué pasa exactamente
 const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
+    service: 'gmail',
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
-    // Fuerza a Nodemailer a usar solo IPv4
-    family: 4,
-    tls: {
-        rejectUnauthorized: false
-    }
+    logger: true, // Activa logs detallados
+    debug: true   // Muestra la conversación SMTP
 });
 
 // --- AUTH ---
@@ -102,14 +99,16 @@ app.post('/api/register', async (req, res) => {
                         <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
                             <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
                         </div>
-                        <p style="font-size: 11px; color: #555;">© 2024 Hotel La Noche S.A.</p>
                 </div>
             `
         };
 
         transporter.sendMail(mailOptions, (error, info) => {
-            if (error) console.log("Error mail:", error.message);
-            else console.log("Email enviado OK a: " + email);
+            if (error) {
+                console.error("DETALLE ERROR MAIL:", error);
+            } else {
+                console.log("Email enviado con éxito!");
+            }
         });
 
         res.status(201).json({ message: 'Código enviado' });
@@ -125,6 +124,8 @@ app.post('/api/verify', async (req, res) => {
         res.json({ message: 'Verificado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// --- NEGOCIO ---
 
 app.get('/api/habitaciones', async (req, res) => {
     try {
