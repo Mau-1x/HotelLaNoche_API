@@ -19,11 +19,10 @@ const dbConfig = {
 
 // --- FUNCIÓN DE ENVÍO MASIVO (BREVO) ---
 async function sendMail(to, subject, content) {
-    console.log(`Intentando enviar mail a: ${to} | Remitente: hotellanochemr@gmail.com`);
     try {
-        const response = await axios.post('https://api.brevo.com/v3/smtp/email', {
-            // EL REMITENTE DEBE SER EL CORREO AUTORIZADO EN BREVO
-            sender: { name: "Hotel La Noche", email: "hotellanochemr@gmail.com" },
+        await axios.post('https://api.brevo.com/v3/smtp/email', {
+            // CORREGIDO: Usando el correo exacto verificado en Brevo
+            sender: { name: "Hotel La Noche", email: "hotellanocher@gmail.com" },
             to: [{ email: to }],
             subject: subject,
             htmlContent: `
@@ -36,13 +35,13 @@ async function sendMail(to, subject, content) {
         }, {
             headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' }
         });
-        console.log("¡Email enviado con éxito vía Brevo API! ID:", response.data.messageId);
+        console.log("¡Email enviado con éxito!");
     } catch (e) {
-        console.error("ERROR REAL EN BREVO:", e.response ? JSON.stringify(e.response.data) : e.message);
+        console.error("Error envío:", e.response ? JSON.stringify(e.response.data) : e.message);
     }
 }
 
-// --- AUTH & RECUPERACIÓN ---
+// --- AUTH ---
 
 app.post('/api/register', async (req, res) => {
     const { nombres, dni, email, password } = req.body;
@@ -55,7 +54,7 @@ app.post('/api/register', async (req, res) => {
         await pool.request().input('idP', sql.Int, idPersona).input('pass', sql.VarChar, password).input('otp', sql.VarChar, otp)
             .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
 
-        await sendMail(email, "👑 Active su Membresía", `<p>Bienvenido. Su código de activación es:</p><div style="font-size: 42px; font-weight: bold; color: #FFFFFF;">${otp}</div>`);
+        await sendMail(email, "👑 Active su Membresía VIP", `<p>Bienvenido. Su código de seguridad es:</p><div style="font-size: 42px; font-weight: bold; color: #FFFFFF;">${otp}</div>`);
         res.status(201).json({ message: 'Código enviado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -83,12 +82,8 @@ app.post('/api/reset-password', async (req, res) => {
         let pool = await sql.connect(dbConfig);
         const result = await pool.request().input('mail', sql.VarChar, email).input('otp', sql.VarChar, codigo).input('pass', sql.VarChar, newPassword)
             .query('UPDATE CLIENTE SET contrasena = @pass, codigo_verificacion = NULL WHERE id_persona = (SELECT id_persona FROM PERSONA WHERE email = @mail) AND codigo_verificacion = @otp');
-
-        if (result.rowsAffected[0] > 0) {
-            res.json({ message: 'Contraseña actualizada' });
-        } else {
-            res.status(400).json({ error: 'Código inválido' });
-        }
+        if (result.rowsAffected[0] > 0) res.json({ message: 'Contraseña actualizada' });
+        else res.status(400).json({ error: 'Código inválido' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -116,8 +111,6 @@ app.post('/api/verify', async (req, res) => {
         res.json({ message: 'Verificado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
-// --- NEGOCIO ---
 
 app.get('/api/habitaciones', async (req, res) => {
     try {
