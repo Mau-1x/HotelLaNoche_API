@@ -1,14 +1,12 @@
 const express = require('express');
 const sql = require('mssql');
 const cors = require('cors');
-const { Resend } = require('resend'); // Nueva tecnología de correo
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
-
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 const dbConfig = {
     user: process.env.DB_USER,
@@ -19,30 +17,31 @@ const dbConfig = {
     options: { encrypt: true, trustServerCertificate: true }
 };
 
-// --- FUNCIÓN DE ENVÍO PROFESIONAL (Vía API - No falla en Render) ---
+// --- FUNCIÓN DE ENVÍO MASIVO (BREVO API) ---
 async function sendMailPremium(to, nombres, otp) {
     try {
-        await resend.emails.send({
-            from: 'Hotel La Noche <onboarding@resend.dev>', // Luego podrás poner tu propio dominio
-            to: to,
-            subject: '👑 Active su Membresía VIP - Hotel La Noche',
-            html: `
-                <div style="background-color: #0A0A0A; padding: 40px; font-family: sans-serif; color: #F5F5F5; text-align: center; border-radius: 20px; border: 2px solid #D4AF37;">
-                    <h1 style="color: #D4AF37; letter-spacing: 5px;">HOTEL LA NOCHE</h1>
-                    <p style="color: #C5A059;">Experiencia de Lujo & Confort</p>
-                    <hr style="border: 0; border-top: 1px solid rgba(212, 175, 55, 0.2); margin: 30px 0;">
-                    <p style="font-size: 18px;">Estimado(a) <strong>${nombres}</strong>,</p>
-                    <p style="color: #9E9E9E;">Su código de seguridad es:</p>
-                    <div style="background: #1E1E1E; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #D4AF37;">
-                        <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #D4AF37;">${otp}</span>
+        await axios.post('https://api.brevo.com/v3/smtp/email', {
+            // USAMOS TU CORREO DE GMAIL QUE ES EL REMITENTE AUTORIZADO
+            sender: { name: "Hotel La Noche", email: "hotellanocher@gmail.com" },
+            to: [{ email: to }],
+            subject: "👑 Código de Activación VIP - Hotel La Noche",
+            htmlContent: `
+                <div style="background-color: #0F172A; padding: 40px; font-family: sans-serif; color: #F8FAFC; text-align: center; border-radius: 20px; border: 2px solid #2563EB;">
+                    <h1 style="color: #60A5FA; letter-spacing: 5px;">HOTEL LA NOCHE</h1>
+                    <p style="color: #60A5FA; text-transform: uppercase; font-size: 12px;">Servicio Corporativo de Lujo</p>
+                    <hr style="border: 0; border-top: 1px solid rgba(96, 165, 250, 0.2); margin: 30px 0;">
+                    <p style="font-size: 18px;">Bienvenido <strong>${nombres}</strong>,</p>
+                    <p style="color: #94A3B8;">Tu código de seguridad para activar tu cuenta es:</p>
+                    <div style="background: #1E293B; padding: 20px; border-radius: 12px; margin: 30px auto; width: fit-content; border: 1px dashed #60A5FA;">
+                        <span style="font-size: 42px; font-weight: bold; letter-spacing: 10px; color: #FFFFFF;">${otp}</span>
                     </div>
-                    <p style="font-size: 12px; color: #555;">Reserva segura vía Hotel La Noche App</p>
-                </div>
-            `
+                </div>`
+        }, {
+            headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' }
         });
-        console.log("Email enviado exitosamente vía Resend API!");
+        console.log("¡Email enviado con éxito vía Brevo API!");
     } catch (e) {
-        console.error("ERROR RESEND:", e.message);
+        console.error("ERROR EN BREVO:", e.response ? e.response.data : e.message);
     }
 }
 
@@ -89,7 +88,8 @@ app.post('/api/verify', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// --- NEGOCIO (Habitaciones, Reservas, etc) ---
+// --- NEGOCIO (Habitaciones, Reservas, Comprobantes) ---
+
 app.get('/api/habitaciones', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
@@ -113,10 +113,13 @@ app.post('/api/reservas', async (req, res) => {
         const d1 = new Date(fecha_entrada); const d2 = new Date(fecha_salida);
         const diffDays = Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) || 1;
         const subtotal = precioNoche * diffDays;
+
         let result = await pool.request().input('idCliente', sql.Int, id_cliente).input('idHab', sql.Int, id_habitacion).input('fEntrada', sql.Date, fecha_entrada).input('fSalida', sql.Date, fecha_salida)
             .query(`INSERT INTO RESERVA (id_cliente, id_habitacion, fecha_reserva, fecha_entrada, fecha_salida, estado_reserva) VALUES (@idCliente, @idHab, GETDATE(), @fEntrada, @fSalida, 'Confirmada'); UPDATE HABITACION SET estado = 'Reservada' WHERE id_habitacion = @idHab; SELECT SCOPE_IDENTITY() AS id_reserva;`);
         const idReserva = result.recordset[0].id_reserva;
-        await pool.request().input('idR', sql.Int, idReserva).input('code', sql.VarChar, ticketCode).input('total', sql.Decimal(10,2), subtotal).query('INSERT INTO COMPROBANTE (id_reserva, codigo_ticket, monto_total, fecha_emision) VALUES (@idR, @code, @total, GETDATE())');
+        await pool.request().input('idR', sql.Int, idReserva).input('code', sql.VarChar, ticketCode).input('total', sql.Decimal(10,2), subtotal)
+            .query('INSERT INTO COMPROBANTE (id_reserva, codigo_ticket, monto_total, fecha_emision) VALUES (@idR, @code, @total, GETDATE())');
+
         res.status(201).json({ id_reserva: idReserva, message: 'Reserva Exitosa' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -124,7 +127,8 @@ app.post('/api/reservas', async (req, res) => {
 app.put('/api/reservas/cancelar/:idReserva', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
-        await pool.request().input('idRes', sql.Int, req.params.idReserva).query(`UPDATE RESERVA SET estado_reserva = 'Cancelada' WHERE id_reserva = @idRes; UPDATE HABITACION SET estado = 'Disponible' WHERE id_habitacion = (SELECT id_habitacion FROM RESERVA WHERE id_reserva = @idRes);`);
+        await pool.request().input('idRes', sql.Int, req.params.idReserva)
+            .query(`UPDATE RESERVA SET estado_reserva = 'Cancelada' WHERE id_reserva = @idRes; UPDATE HABITACION SET estado = 'Disponible' WHERE id_habitacion = (SELECT id_habitacion FROM RESERVA WHERE id_reserva = @idRes);`);
         res.json({ message: 'Anulada' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -132,7 +136,8 @@ app.put('/api/reservas/cancelar/:idReserva', async (req, res) => {
 app.get('/api/reservas/cliente/:idCliente', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
-        let result = await pool.request().input('idC', sql.Int, req.params.idCliente).query(`SELECT r.*, h.numero_habitacion, th.nombre as tipo_nombre FROM RESERVA r INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE r.id_cliente = @idC ORDER BY r.fecha_reserva DESC`);
+        let result = await pool.request().input('idC', sql.Int, req.params.idCliente)
+            .query(`SELECT r.*, h.numero_habitacion, th.nombre as tipo_nombre FROM RESERVA r INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE r.id_cliente = @idC ORDER BY r.fecha_reserva DESC`);
         res.json(result.recordset);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -140,7 +145,8 @@ app.get('/api/reservas/cliente/:idCliente', async (req, res) => {
 app.get('/api/comprobantes/reserva/:idReserva', async (req, res) => {
     try {
         let pool = await sql.connect(dbConfig);
-        let result = await pool.request().input('idR', sql.Int, req.params.idReserva).query(`SELECT c.*, p.nombres, h.numero_habitacion, th.nombre as tipo_nombre FROM COMPROBANTE c INNER JOIN RESERVA r ON c.id_reserva = r.id_reserva INNER JOIN CLIENTE cl ON r.id_cliente = cl.id_cliente INNER JOIN PERSONA p ON cl.id_persona = p.id_persona INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE c.id_reserva = @idR`);
+        let result = await pool.request().input('idR', sql.Int, req.params.idReserva)
+            .query(`SELECT c.*, p.nombres, h.numero_habitacion, th.nombre as tipo_nombre FROM COMPROBANTE c INNER JOIN RESERVA r ON c.id_reserva = r.id_reserva INNER JOIN CLIENTE cl ON r.id_cliente = cl.id_cliente INNER JOIN PERSONA p ON cl.id_persona = p.id_persona INNER JOIN HABITACION h ON r.id_habitacion = h.id_habitacion INNER JOIN TIPO_HABITACION th ON h.id_tipo_habitacion = th.id_tipo_habitacion WHERE c.id_reserva = @idR`);
         res.json(result.recordset[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
