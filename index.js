@@ -19,8 +19,10 @@ const dbConfig = {
 
 // --- FUNCIÓN DE ENVÍO MASIVO (BREVO) ---
 async function sendMail(to, subject, content) {
+    console.log(`Intentando enviar mail a: ${to} | Remitente: hotellanochemr@gmail.com`);
     try {
-        await axios.post('https://api.brevo.com/v3/smtp/email', {
+        const response = await axios.post('https://api.brevo.com/v3/smtp/email', {
+            // EL REMITENTE DEBE SER EL CORREO AUTORIZADO EN BREVO
             sender: { name: "Hotel La Noche", email: "hotellanochemr@gmail.com" },
             to: [{ email: to }],
             subject: subject,
@@ -34,7 +36,10 @@ async function sendMail(to, subject, content) {
         }, {
             headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json' }
         });
-    } catch (e) { console.error("Error correo:", e.message); }
+        console.log("¡Email enviado con éxito vía Brevo API! ID:", response.data.messageId);
+    } catch (e) {
+        console.error("ERROR REAL EN BREVO:", e.response ? JSON.stringify(e.response.data) : e.message);
+    }
 }
 
 // --- AUTH & RECUPERACIÓN ---
@@ -50,7 +55,7 @@ app.post('/api/register', async (req, res) => {
         await pool.request().input('idP', sql.Int, idPersona).input('pass', sql.VarChar, password).input('otp', sql.VarChar, otp)
             .query('INSERT INTO CLIENTE (id_persona, contrasena, codigo_verificacion, esta_verificado) VALUES (@idP, @pass, @otp, 0)');
 
-        sendMail(email, "👑 Active su Membresía", `<p>Bienvenido. Su código de activación es:</p><div style="font-size: 42px; font-weight: bold; color: #FFFFFF;">${otp}</div>`);
+        await sendMail(email, "👑 Active su Membresía", `<p>Bienvenido. Su código de activación es:</p><div style="font-size: 42px; font-weight: bold; color: #FFFFFF;">${otp}</div>`);
         res.status(201).json({ message: 'Código enviado' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -64,7 +69,7 @@ app.post('/api/forgot-password', async (req, res) => {
             .query('UPDATE CLIENTE SET codigo_verificacion = @otp WHERE id_persona = (SELECT id_persona FROM PERSONA WHERE email = @mail)');
 
         if (result.rowsAffected[0] > 0) {
-            sendMail(email, "🔑 Recuperación de Contraseña", `<p>Use este código para restablecer su contraseña:</p><div style="font-size: 42px; font-weight: bold; color: #FFFFFF;">${recoveryCode}</div>`);
+            await sendMail(email, "🔑 Recuperación de Contraseña", `<p>Use este código para restablecer su contraseña:</p><div style="font-size: 42px; font-weight: bold; color: #FFFFFF;">${recoveryCode}</div>`);
             res.json({ message: 'Código enviado' });
         } else {
             res.status(404).json({ error: 'Correo no encontrado' });
