@@ -44,6 +44,28 @@ async function sendMail(to, subject, content) {
 app.post('/api/reservas', async (req, res) => {
     const { id_cliente, id_habitacion, fecha_entrada, fecha_salida, hora_reserva } = req.body;
 
+    // Validaciones de fechas
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    const entrada = new Date(fecha_entrada);
+    entrada.setHours(0, 0, 0, 0);
+
+    const salida = new Date(fecha_salida);
+    salida.setHours(0, 0, 0, 0);
+
+    if (entrada < hoy) {
+        return res.status(400).json({
+            error: "No se puede reservar una fecha anterior a hoy."
+        });
+    }
+
+    if (salida <= entrada) {
+        return res.status(400).json({
+            error: "La fecha de salida debe ser posterior a la fecha de entrada."
+        });
+    }
+
     try {
         let pool = await sql.connect(dbConfig);
 
